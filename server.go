@@ -64,6 +64,9 @@ func main() {
 		r.HTML(200, "index", nil)
 	})
 
+	//TODO: Run serial daemon
+	//TODO: Make sure that the serial daemon adds the questions
+
 	m.Post("/upload", upload)
 	m.Get("/uploads", listFiles)
 	m.Post("/questions/start/:type", startQuestion)
