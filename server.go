@@ -73,7 +73,6 @@ func main() {
 	//TODO: Run serial daemon
 	//TODO: Make sure that the serial daemon adds the questions
 
-	resetQuestionsResponses() // Remove this line
 	go CheckSerial()
 	m.Post("/upload", upload)
 	m.Get("/uploads", listFiles)
