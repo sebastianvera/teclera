@@ -12,6 +12,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/go-martini/martini"
 	"github.com/martini-contrib/cors"
@@ -19,7 +20,10 @@ import (
 	"github.com/tarm/goserial"
 )
 
-const MoteDevices int = 2
+const (
+	XbeeNodes              int    = 2
+	serialPackageDelimeter string = ">"
+)
 
 type Response struct {
 	Value int `json:"buttonPressed"`
@@ -51,11 +55,33 @@ func (r *Response) No() int {
 	return val
 }
 
+func (r *Response) TurnOnLedCommand() string {
+	return fmt.Sprintf("AN %02x %02x", r.From, r.Value)
+}
+
+// Validate the response depending of the CurrentQuestionMode
+func (r *Response) ValidResponse() bool {
+	if CurrentQuestionMode == QuestionModes["two"] {
+		return r.Value == 0 || r.Value == 1
+	}
+
+	if CurrentQuestionMode == QuestionModes["multiple"] {
+		return r.Value >= 0 && r.Value <= 3
+	}
+
+	fmt.Printf("Error: Not a valid response\n CurrentQuestionMode: %v\nResponse: %+v\n", CurrentQuestionMode, r)
+	return false
+}
+
 var (
-	MoteModes           = map[string]int{"two": 0, "multiple": 1}
-	Responses           = make([]Response, MoteDevices)
+	QuestionModes       = map[string]int{"two": 2, "multiple": 3}
+	Responses           = make([]Response, XbeeNodes)
 	CurrentQuestionMode = -1
+	mutex               = &sync.Mutex{}
+	serialConfig        = &serial.Config{Name: findArduino(), Baud: 9600}
 )
+
+var serialReader = 0
 
 func main() {
 	m := martini.Classic()
@@ -70,10 +96,11 @@ func main() {
 		r.HTML(200, "index", nil)
 	})
 
-	//TODO: Run serial daemon
-	//TODO: Make sure that the serial daemon adds the questions
-
-	go CheckSerial()
+	serialReader, err := serial.OpenPort(serialConfig)
+	if err != nil {
+		log.Fatal(err)
+	}
+	go CheckSerial(serialReader)
 	m.Post("/upload", upload)
 	m.Get("/uploads", listFiles)
 	m.Post("/questions/start/:type", startQuestion)
@@ -86,28 +113,18 @@ func handleResponse(bytes []byte) {
 	res := Response{}
 	json.Unmarshal(bytes, &res)
 
-	// if is not set,
-	if !Responses[res.From-1].Answered() {
-		Responses[res.From-1] = res
-		fmt.Println("New response")
-		fmt.Printf("%+v\n", res)
+	if Responses[res.From-1].Answered() {
+		// fmt.Println("Response already answered")
 	} else {
-		fmt.Println("Response already answered")
-	}
-	fmt.Println("Responses:")
-	for _, i := range Responses {
-		fmt.Printf("%+v\n", i)
+		if res.ValidResponse() {
+			Responses[res.From-1] = res
+			writeToSerial(res.TurnOnLedCommand())
+		}
 	}
 }
 
-func CheckSerial() {
-	c := &serial.Config{Name: findArduino(), Baud: 9600}
-	s, err := serial.OpenPort(c)
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer s.Close()
-	buff := bufio.NewReader(s)
+func CheckSerial(serialBuffer io.ReadWriteCloser) {
+	buff := bufio.NewReader(serialBuffer)
 	for {
 		bytes, _, err := buff.ReadLine()
 		if err != nil {
@@ -117,6 +134,18 @@ func CheckSerial() {
 	}
 }
 
+func writeToSerial(command string) {
+	mutex.Lock()
+	serialBuffer, err := serial.OpenPort(serialConfig)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer serialBuffer.Close()
+	serialBuffer.Write([]byte(command + serialPackageDelimeter))
+	mutex.Unlock()
+	runtime.Gosched()
+}
+
 func findArduino() string {
 	contents, _ := ioutil.ReadDir("/dev")
 
@@ -124,13 +153,11 @@ func findArduino() string {
 		os := runtime.GOOS
 		switch os {
 		case "linux":
-			if strings.Contains(f.Name(), "ACM") ||
-				strings.Contains(f.Name(), "ttyUSB3") {
+			if strings.Contains(f.Name(), "ACM") {
 				return "/dev/" + f.Name()
 			}
 		case "darwin":
-			if strings.Contains(f.Name(), "tty.usbmodem") ||
-				strings.Contains(f.Name(), "ttyUSB") {
+			if strings.Contains(f.Name(), "tty.usbmodem") {
 				return "/dev/" + f.Name()
 			}
 		default:
@@ -152,7 +179,7 @@ func test(r render.Render, params martini.Params) {
 func stopQuestion(r render.Render) {
 	jsonResponse := map[string]int{}
 	switch CurrentQuestionMode {
-	case MoteModes["two"]:
+	case QuestionModes["two"]:
 		jsonResponse = map[string]int{"yes": 0, "no": 0}
 		for _, response := range Responses {
 			if response.Answered() {
@@ -160,7 +187,7 @@ func stopQuestion(r render.Render) {
 				jsonResponse["no"] += response.No()
 			}
 		}
-	case MoteModes["multiple"]:
+	case QuestionModes["multiple"]:
 		jsonResponse = map[string]int{"a": 0, "b": 0, "c": 0, "d": 0}
 		for _, response := range Responses {
 			if response.Answered() {
@@ -173,26 +200,49 @@ func stopQuestion(r render.Render) {
 			CurrentQuestionMode,
 		)
 	}
+	writeToSerial(stopQuestionCommand())
 	r.JSON(200, jsonResponse)
 }
 
-func startQuestion(r render.Render, params martini.Params) {
-	mode := MoteModes[params["type"]]
-
-	tellMoteStartQuestion(mode)
-	CurrentQuestionMode = mode
-	resetQuestionsResponses()
-
-	//TODO: Respond with a json
-	r.JSON(200, map[string]string{"status": "started"})
+func stopQuestionCommand() string {
+	return "Q0"
 }
 
-func tellMoteStartQuestion(mode int) {
-	fmt.Println("Mote start question mode", mode)
+func startQuestionCommand() string {
+	command := "Q1"
+
+	switch CurrentQuestionMode {
+	case QuestionModes["two"]:
+		command += " TWO"
+	case QuestionModes["multiple"]:
+		command += " MUL"
+	default:
+		log.Fatal("Wrong question mode")
+	}
+
+	return command
+}
+
+func startQuestion(r render.Render, params martini.Params) {
+	if mode, ok := QuestionModes[params["type"]]; ok {
+		CurrentQuestionMode = mode
+		tellArduinoToStartQuestion()
+		resetQuestionsResponses()
+
+		//TODO: Ask frontend guy if he needs some kind of feedback
+		r.JSON(200, map[string]interface{}{"status": "started", "questionMode": mode})
+	} else {
+		r.JSON(422, map[string]interface{}{"status": "error", "msg": "Bad mode: " + params["type"]})
+	}
+}
+
+func tellArduinoToStartQuestion() {
+	writeToSerial(stopQuestionCommand())
+	writeToSerial(startQuestionCommand())
 }
 
 func resetQuestionsResponses() {
-	fmt.Println("Resetting question responses")
+	// fmt.Println("Resetting question responses")
 	for i := range Responses {
 		Responses[i].Reset()
 	}
