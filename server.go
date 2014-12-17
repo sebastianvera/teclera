@@ -76,7 +76,7 @@ func (r *Response) ValidResponse() bool {
 
 var (
 	QuestionModes       = map[string]int{"two": 2, "multiple": 3}
-	Responses           = make([]Response, XbeeNodes)
+	Responses           = make(map[int]*Response)
 	CurrentQuestionMode = -1
 	mutex               = &sync.Mutex{}
 	serialConfig        = &serial.Config{Name: findArduino(), Baud: 9600}
@@ -121,15 +121,15 @@ func waitForSerialConnection() io.ReadWriteCloser {
 }
 
 func handleResponse(bytes []byte) {
-	res := Response{}
-	json.Unmarshal(bytes, &res)
-
-	if Responses[res.From-1].Answered() {
-		// fmt.Println("Response already answered")
+	incomingResponse := Response{}
+	json.Unmarshal(bytes, &incomingResponse)
+	if response, ok := Responses[incomingResponse.From]; ok && response.Answered() {
+		fmt.Println("Response already answered")
 	} else {
-		if res.ValidResponse() {
-			Responses[res.From-1] = res
-			writeToSerial(res.TurnOnLedCommand())
+		if incomingResponse.ValidResponse() {
+			response := Response{From: incomingResponse.From, Value: incomingResponse.Value}
+			Responses[incomingResponse.From] = &response
+			writeToSerial(response.TurnOnLedCommand())
 		}
 	}
 }
@@ -183,10 +183,16 @@ func findArduino() string {
 func test(r render.Render, params martini.Params) {
 	index, _ := strconv.Atoi(params["index"])
 	val, _ := strconv.Atoi(params["val"])
-	Responses[index].Value = val
-	Responses[index].From = val
-	fmt.Println(Responses)
-	r.JSON(200, map[string]int{"index": index, "value": val, "from": Responses[index].From})
+	if response, ok := Responses[index]; ok {
+		response.Value = val
+		response.From = index
+		printResponses()
+		fmt.Println(response)
+		r.JSON(200, map[string]interface{}{"value": val, "from": Responses[index].From, "status": "updated"})
+	} else {
+		Responses[index] = &Response{From: index, Value: val}
+		r.JSON(200, map[string]interface{}{"value": val, "from": Responses[index].From, "status": "created"})
+	}
 }
 
 func stopQuestion(r render.Render) {
@@ -255,10 +261,19 @@ func tellArduinoToStartQuestion() {
 }
 
 func resetQuestionsResponses() {
-	// fmt.Println("Resetting question responses")
-	for i := range Responses {
-		Responses[i].Reset()
+	fmt.Println("Resetting question responses")
+	printResponses()
+	for _, response := range Responses {
+		response.Reset()
 	}
+	fmt.Println("After reset")
+	printResponses()
+}
+
+func printResponses() {
+	// for _, res := range Responses {
+	// 	fmt.Printf("%+v\n", res)
+	// }
 }
 
 func upload(w http.ResponseWriter, r *http.Request) {
