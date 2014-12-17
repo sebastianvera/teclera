@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/go-martini/martini"
 	"github.com/martini-contrib/cors"
@@ -21,7 +22,7 @@ import (
 )
 
 const (
-	XbeeNodes              int    = 2
+	XbeeNodes              int    = 10
 	serialPackageDelimeter string = ">"
 )
 
@@ -81,8 +82,6 @@ var (
 	serialConfig        = &serial.Config{Name: findArduino(), Baud: 9600}
 )
 
-var serialReader = 0
-
 func main() {
 	m := martini.Classic()
 
@@ -96,10 +95,8 @@ func main() {
 		r.HTML(200, "index", nil)
 	})
 
-	serialReader, err := serial.OpenPort(serialConfig)
-	if err != nil {
-		log.Fatal(err)
-	}
+	serialReader := waitForSerialConnection()
+
 	go CheckSerial(serialReader)
 	m.Post("/upload", upload)
 	m.Get("/uploads", listFiles)
@@ -107,6 +104,20 @@ func main() {
 	m.Post("/questions/stop", stopQuestion)
 	m.Post("/test/:index/:val", test)
 	m.Run()
+}
+
+func waitForSerialConnection() io.ReadWriteCloser {
+	serialReader, err := serial.OpenPort(serialConfig)
+	for err != nil {
+		fmt.Println("Arduino Base not detected, please connect it before continuing.")
+		sleepTime := 2 * time.Second
+		fmt.Printf("Sleeping for %v.\n", sleepTime)
+		time.Sleep(sleepTime)
+		serialConfig = &serial.Config{Name: findArduino(), Baud: 9600}
+		serialReader, err = serial.OpenPort(serialConfig)
+	}
+
+	return serialReader
 }
 
 func handleResponse(bytes []byte) {
@@ -128,6 +139,7 @@ func CheckSerial(serialBuffer io.ReadWriteCloser) {
 	for {
 		bytes, _, err := buff.ReadLine()
 		if err != nil {
+			_ = waitForSerialConnection()
 			log.Fatal(err)
 		}
 		handleResponse(bytes)
@@ -138,6 +150,7 @@ func writeToSerial(command string) {
 	mutex.Lock()
 	serialBuffer, err := serial.OpenPort(serialConfig)
 	if err != nil {
+		serialBuffer = waitForSerialConnection()
 		log.Fatal(err)
 	}
 	defer serialBuffer.Close()
