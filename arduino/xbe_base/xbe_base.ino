@@ -4,6 +4,7 @@
 SoftwareSerial nss = SoftwareSerial(3,2);
 
 XBee xbee = XBee();
+int delayTime = 100;
 
 Rx16IoSampleResponse ioSample = Rx16IoSampleResponse();
 char serialPackageDelimeter = '>';
@@ -69,6 +70,7 @@ void turnOnLed(uint8_t address, int buttonPin) {
 void turnOnFirstTwoLeds() {
   for (int pin = 0; pin < 2; pin++) {
     setValueToLed(BROADCAST_ADDRESS, pin, HIGH);
+    delay(delayTime);
   }
 }
 
@@ -79,6 +81,7 @@ void turnOnLedsBroadcast() {
 void turnOffLedsBroadcast() {
   for (int pin = 0; pin < 4; pin++) {
     setValueToLed(BROADCAST_ADDRESS, pin, LOW);
+    delay(delayTime);
   }
 }
 
@@ -99,6 +102,7 @@ void setValueToLed(uint16_t address, int buttonPin, int value) {
 void broadcastValueToLeds(int value) {
    for (int buttonPin = 0; buttonPin <= 3; buttonPin++) {
     setValueToLed(BROADCAST_ADDRESS, buttonPin, value); 
+    delay(delayTime);
   }
 }
 
