@@ -34,10 +34,10 @@
       <setting command="RO">3</setting>
       <setting command="AP">0</setting>
       <setting command="D8">0</setting>
-      <setting command="D7">4</setting>
-      <setting command="D6">4</setting>
-      <setting command="D5">1</setting>
-      <setting command="D4">0</setting>
+      <setting command="D7">5</setting>
+      <setting command="D6">5</setting>
+      <setting command="D5">5</setting>
+      <setting command="D4">5</setting>
       <setting command="D3">3</setting>
       <setting command="D2">3</setting>
       <setting command="D1">3</setting>

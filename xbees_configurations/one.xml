@@ -45,7 +45,7 @@
       <setting command="PR">0</setting>
       <setting command="IU">1</setting>
       <setting command="IT">1</setting>
-      <setting command="IC">7</setting>
+      <setting command="IC">F</setting>
       <setting command="IR">EA60</setting>
       <setting command="P0">1</setting>
       <setting command="P1">0</setting>
